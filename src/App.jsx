@@ -343,7 +343,7 @@ export default function App() {
             <Container maxWidth="lg" className="container">
                 <Box className="header" sx={{ mb: 4 }}>
                     <Typography variant="h4" gutterBottom>
-                        Advanced Time Card Calculator
+                        Time Card Calculator
                     </Typography>
                 </Box>
 
