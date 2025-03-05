@@ -161,7 +161,7 @@ export default function App() {
       autoDeductBreaks: false,
       breakMinutes: 0,
       nameDays: true,
-      calculateOvertime: true,
+      calculateOvertime: false,
       overtimeRule: 'standard',
       dailyOvertimeThreshold: 8,
       weeklyOvertimeThreshold: 40,
@@ -202,6 +202,7 @@ export default function App() {
     payRate: watch('payRate'),
     roundInterval: watch('roundInterval'),
     displayDailyOT: watch('displayDailyOT'),
+    date: watch('date'),
   };
 
   const employees = watch('employees');
@@ -234,7 +235,7 @@ export default function App() {
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 10;
     const cellWidth = (pageWidth - 3 * margin) / 2;
-    const cellHeight = 250;
+    const cellHeight = 130; // Adjusted cell height to reduce spacing issue
 
     doc.setFontSize(16);
     doc.text('Employee Time Cards', margin, 10);
@@ -250,55 +251,88 @@ export default function App() {
       const baseY = 20 + row * (cellHeight + margin);
       let currentY = baseY;
 
-      // First row: Calculation Summary (placed before form input)
-      doc.setFontSize(12);
-      doc.text(`Total Hours: ${employee.totalHours.toFixed(2)} hrs`, baseX, currentY);
-      currentY += 7;
-      doc.text(`Regular Hours: ${employee.regularHours.toFixed(2)} hrs`, baseX, currentY);
-      currentY += 7;
-      doc.text(`Overtime Hours: ${employee.overtimeHours.toFixed(2)} hrs`, baseX, currentY);
-      currentY += 7;
-      doc.text(`Gross Pay: $${employee.grossPay.toFixed(2)}`, baseX, currentY);
-      currentY += 15;
-
-      // Second row: Form Input (placed below calculations)
+      // Employee Info Box
       doc.setFontSize(14);
-      doc.text(`Employee: ${employee.name || 'Unnamed'}`, baseX, currentY);
+      doc.text(`Employee: ${employee.name || 'Unnamed'}`, baseX, currentY + 5);
       currentY += 10;
       doc.setFontSize(12);
-      doc.text(`Start Date: ${new Date(employee.startDate).toLocaleDateString()}`, baseX, currentY);
+      const start_date = new Date(employee.startDate);
+      doc.text(`Start Date: ${start_date.toLocaleDateString()}`, baseX, currentY);
       currentY += 7;
 
       // Process weekly data
-      const processedWeeks = processEmployeeHours(employee, currentSettings);
+      let overallDecimal = 0, overallGross = 0;
+      let processedWeeks = [];
+      employee.weeks.forEach((week, weekIndex) => {
+        let weekTotal = 0, weekGross = 0;
+        let weekData = { days: [] };
+
+        week.days.forEach((day, dayIndex) => {
+          const totalHours = calculateDailyHours(
+            day.entries,
+            day.breaks,
+            day.date,
+            currentSettings.timeFormat,
+            currentSettings.breakMinutes,
+            currentSettings.autoDeductBreaks
+          );
+          weekTotal += totalHours;
+
+          const { dailyOT, weeklyOT } = calculateOvertime(totalHours, weekTotal, currentSettings.dailyThreshold, currentSettings.weeklyThreshold);
+          const regularHours = totalHours - dailyOT;
+          const hourlyRate = currentSettings.payRate || 0;
+          const overtimeRate = currentSettings.overtimeRate || hourlyRate * 1.5; // Default OT rate = 1.5x regular
+
+          const totalPay = (regularHours * hourlyRate) + (dailyOT * overtimeRate);
+          weekGross += totalPay;
+
+          weekData.days.push({
+            date: addDays(start_date, dayIndex),
+            regularHours,
+            dailyOT,
+            totalPay,
+          });
+        });
+
+        overallDecimal += weekTotal;
+        overallGross += weekGross;
+        processedWeeks.push(weekData);
+      });
+
+      // Calculation Box (Placing before Employee Info Box)
+      doc.setFontSize(10);
+
       processedWeeks.forEach((week, weekIndex) => {
         doc.setFontSize(10);
         doc.text(`Week ${weekIndex + 1}`, baseX, currentY);
         currentY += 4;
-        const tableData = week.days.map((day, dayIndex) => [
-          currentSettings.nameDays ? DAY_NAMES[new Date(day.date).getDay()] : `Day ${dayIndex + 1}`,
-          (day.regularHours + day.overtimeHours).toFixed(2),
-          decimalToHHMM(day.regularHours + day.overtimeHours),
-          `$${day.totalPay.toFixed(2)}`
+        const tableData = week.days.map((day) => [
+          day.date.toLocaleDateString(),
+          (day.regularHours + day.dailyOT).toFixed(2),
+          decimalToHHMM(day.regularHours + day.dailyOT),
+          `$${day.totalPay.toFixed(2)}`,
         ]);
         autoTable(doc, {
           startY: currentY,
           margin: { left: baseX },
           tableWidth: cellWidth,
-          head: [['Day', 'Dec Hours', 'hh:mm', 'Pay']],
+          head: [['Date', 'Dec Hours', 'hh:mm', 'Pay']],
           body: tableData,
           styles: { fontSize: 8 },
           headStyles: { fillColor: [200, 200, 200], textColor: 0, fontSize: 9 },
           theme: 'grid',
         });
-        currentY = doc.lastAutoTable.finalY + 5;
+        currentY = doc.lastAutoTable.finalY + 3;
       });
+
+      doc.setFontSize(10);
+      doc.text(`Final Totals (Decimal): ${overallDecimal.toFixed(2)} hrs`, baseX, currentY);
+      doc.text(`Final Totals (hh:mm): ${decimalToHHMM(overallDecimal)}`, baseX, currentY + 5);
+      doc.text(`Final Gross Pay: $${overallGross.toFixed(2)}`, baseX, currentY + 10);
     });
 
     doc.save('timecards.pdf');
   };
-
-
   const timeRegex =
     currentSettings.timeFormat === '12'
       ? /^(0?[1-9]|1[0-2]):[0-5][0-9]$/
@@ -641,6 +675,7 @@ export default function App() {
                     control={control}
                     render={({ field }) => (
                       <DatePicker
+                        name='date'
                         label="Start Date"
                         value={field.value}
                         onChange={(date) => field.onChange(date)}
